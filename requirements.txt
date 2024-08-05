@@ -1,6 +1,6 @@
 streamlit
 faiss-cpu
-langchain
+transformers
+torch
 pandas
-numpy
-sentence-transformers
+langchain_community
