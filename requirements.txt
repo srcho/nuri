@@ -3,3 +3,4 @@ faiss-cpu
 langchain
 pandas
 numpy
+sentence-transformers

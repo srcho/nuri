@@ -1,92 +1,55 @@
 import streamlit as st
-import sqlite3
+import numpy as np
+import pandas as pd
+from utils.data_loader import load_data, prepare_faiss_index
+from utils.search_utils import create_faiss_index, save_faiss_index, load_faiss_index, search_similar_docs, encode_query
 
-try:
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (username TEXT PRIMARY KEY, password TEXT)''')
-    conn.commit()
-except Exception as e:
-    st.error(f"데이터베이스 연결 오류: {e}")
+@st.cache_data
+def load_and_process_data():
+    df = load_data("data/nuri_des.csv")
+    embeddings, doc_ids, titles = prepare_faiss_index(df)
+    return df, embeddings, doc_ids, titles
 
-def create_user(username, password):
-    c.execute("INSERT INTO users VALUES (?, ?)", (username, password))
-    conn.commit()
+@st.cache_resource
+def get_faiss_index(embeddings):
+    index = create_faiss_index(embeddings)
+    save_faiss_index(index, "data/faiss_index.bin")
+    return index
 
-def check_user(username, password):
-    c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
-    return c.fetchone() is not None
-
-def login_page():
-    st.title("로그인")
-    
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-        st.session_state.username = None
-
-    if st.session_state.logged_in:
-        st.write(f"환영합니다, {st.session_state.username}님!")
-        if st.button("로그아웃"):
-            st.session_state.logged_in = False
-            st.session_state.username = None
-            st.rerun()
-    else:
-        username = st.text_input("사용자명")
-        password = st.text_input("비밀번호", type="password")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("로그인"):
-                if check_user(username, password):
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    st.success("로그인 성공!")
-                    st.rerun()
-                else:
-                    st.error("잘못된 사용자명 또는 비밀번호입니다.")
-        
-        with col2:
-            if st.button("회원가입"):
-                if username and password:
-                    create_user(username, password)
-                    st.success("회원가입이 완료되었습니다. 이제 로그인할 수 있습니다.")
-                else:
-                    st.error("사용자명과 비밀번호를 모두 입력해주세요.")
-
-def search_page():
-    st.title("더 똑똑하게 찾는 학술 정보")
-    
-    # 검색 입력 필드와 버튼을 나란히 배치
-    col1, col2 = st.columns([4, 1])  # 4:1 비율로 열 생성
-    
-    with col1:
-        search_query = st.text_input("어떤 지식을 알고 싶으신가요?", key="search_input", label_visibility="collapsed")
-    
-    with col2:
-        search_button = st.button("검색", key="search_button", use_container_width=True)
-    
-    # 키워드 태그
-    keywords = ["소셜미디어", "코로나19", "AI", "OTT", "인공지능", "유튜브"]
-    st.write(" ".join([f"#{keyword}" for keyword in keywords]))
-    
-    # 안내 메시지
-    st.write("프로토타입 테스트로, 신문방송학 관련 질문만 가능합니다.")
-    st.write("주요 연구 키워드를 참고하여 질문해 보세요.")
-
-    if search_button:
-        # 여기에 검색 로직을 구현합니다
-        st.write(f"'{search_query}'에 대한 검색 결과:")
-        # 검색 결과를 표시하는 로직을 추가합니다
+def display_results(results: pd.DataFrame, top_k: int):
+    for _, row in results.iterrows():
+        st.write(f"제목: {row['title']}")
+        st.write(f"초록: {row['abstract.Element:Text'][:200]}...")
+        st.write("---")
 
 def main():
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
+    st.title("AI 논문 검색 엔진")
+    
+    df, embeddings, doc_ids, titles = load_and_process_data()
+    index = get_faiss_index(embeddings)
+    
+    st.write(f"총 {len(doc_ids)}개의 문서가 로드되었습니다.")
+    st.write(f"임베딩 차원: {embeddings.shape[1]}")
 
-    if st.session_state.logged_in:
-        search_page()
-    else:
-        login_page()  # 이전에 구현한 로그인 페이지 함수
+    st.sidebar.title("검색 옵션")
+    search_type = st.sidebar.radio("검색 유형", ("키워드", "의미론적"))
+    top_k = st.sidebar.slider("표시할 결과 수", 1, 20, 5)
+
+    query = st.text_input("검색어를 입력하세요")
+
+    if st.button("검색"):
+        if query:
+            if search_type == "키워드":
+                results = df[df['title'].str.contains(query, case=False) | df['abstract.Element:Text'].str.contains(query, case=False)]
+                display_results(results.head(top_k), top_k)
+            else:
+                query_vector = encode_query(query, embeddings.shape[1])
+                st.write(f"쿼리 벡터 차원: {query_vector.shape[1]}")
+                distances, indices = search_similar_docs(index, query_vector, top_k)
+                results = df.iloc[indices[0]]
+                display_results(results, top_k)
+        else:
+            st.warning("검색어를 입력해주세요.")
 
 if __name__ == "__main__":
     main()
