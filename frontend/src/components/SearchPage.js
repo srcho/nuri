@@ -1,19 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Typography, Box, TextField, IconButton, Divider, Grid, CircularProgress } from '@mui/material';
+import { Container, Typography, Box, Divider, Grid, CircularProgress, Button } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import NoResult from './NoResult';
 import GPTSummary from './GPTSummary';
 import PaperList from './PaperList';
 
-function SearchPage() {
-  const [query, setQuery] = useState('');
+const SearchPage = () => {
   const [searchResult, setSearchResult] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const location = useLocation();
+  const navigate = useNavigate();
+  const query = location.state?.query || "";
 
-  const handleSearch = useCallback(async (searchQuery = query) => {
+  const handleSearch = useCallback(async (searchQuery) => {
     setIsLoading(true);
     setError(null);
     setSearchResult(null);
@@ -33,47 +34,39 @@ function SearchPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [query]);
+  }, []);
 
   useEffect(() => {
-    if (location.state && location.state.query) {
-      setQuery(location.state.query);
-      handleSearch(location.state.query);
+    if (query) {
+      handleSearch(query);
     }
-  }, [location, handleSearch]);
+  }, [query, handleSearch]);
 
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
+        <Button 
+          variant="contained" 
+          color="primary" 
+          onClick={() => navigate('/')}
+          sx={{ mb: 2 }}
+        >
+          메인 페이지로 돌아가기
+        </Button>
         <Grid container spacing={2}>
           <Grid item xs={8}>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
               <SearchIcon color="primary" sx={{ mr: 1 }} />
               <Typography variant="h5" component="h1" sx={{ fontWeight: 'bold' }}>
-                {query || "연구 논문 검색"}
+                검색 결과: "{query}"
               </Typography>
             </Box>
             <Divider sx={{ borderColor: 'primary.main', borderWidth: 2 }} />
-            <Box sx={{ mt: 2, mb: 4 }}>
-              <TextField
-                fullWidth
-                variant="outlined"
-                placeholder="질문을 입력하세요"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                InputProps={{
-                  endAdornment: (
-                    <IconButton onClick={() => handleSearch()} edge="end" color="primary">
-                      <SearchIcon />
-                    </IconButton>
-                  ),
-                }}
-              />
+            <Box sx={{ mt: 4 }}>
+              {isLoading && <CircularProgress />}
+              {error && <Typography color="error" align="center">{error}</Typography>}
+              {searchResult && <GPTSummary summary={searchResult.answer} />}
             </Box>
-            {isLoading && <CircularProgress />}
-            {error && <Typography color="error" align="center">{error}</Typography>}
-            {searchResult && <GPTSummary summary={searchResult.answer} />}
           </Grid>
           <Grid item xs={4}>
             {searchResult?.sources?.length > 0 ? (

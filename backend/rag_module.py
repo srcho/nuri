@@ -10,6 +10,7 @@ from tqdm import tqdm
 import json
 import math
 import logging
+import numpy as np
 
 load_dotenv()
 
@@ -51,11 +52,25 @@ class RAGSystem:
             return_source_documents=True
         )
 
+    def calculate_similarity(self, query_vector, doc_vector):
+        return np.dot(query_vector, doc_vector) / (np.linalg.norm(query_vector) * np.linalg.norm(doc_vector))
+
     def answer_question(self, question):
         try:
-            result = self.qa_chain({"query": question})
-            sources = [self.safe_serialize_metadata(doc.metadata) for doc in result['source_documents']]
+            # 질문을 벡터로 변환
+            question_vector = self.embeddings.embed_query(question)
+
+            # 유사한 문서 검색 및 유사도 계산
+            similar_docs = self.vectorstore.similarity_search_with_score(question, k=5)
             
+            sources = []
+            for doc, score in similar_docs:
+                doc_vector = self.embeddings.embed_query(doc.page_content)
+                similarity = self.calculate_similarity(question_vector, doc_vector)
+                metadata = self.safe_serialize_metadata(doc.metadata)
+                metadata['similarity'] = similarity
+                sources.append(metadata)
+
             abstracts = [source['abstract'] for source in sources[:5]]
             prompt = f"""다음은 사용자의 질문과 관련된 논문 초록입니다. 이 정보를 바탕으로 사용자의 질문에 답변해주세요.
 
