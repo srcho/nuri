@@ -1,6 +1,0 @@
-streamlit
-faiss-cpu
-transformers
-torch
-pandas
-langchain_community
