@@ -1,2 +1,7 @@
 nuri_mod.xlsx
 .env
+faiss_index/*.faiss
+faiss_index/*.pkl
+backend/faiss_index/index.faiss
+backend/faiss_index/index.pkl
+frontend/node_modules/.cache/default-development/4.pack
