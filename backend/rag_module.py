@@ -13,6 +13,7 @@ import math
 import logging
 import numpy as np
 from kiwipiepy import Kiwi
+from sklearn.preprocessing import MinMaxScaler
 from langchain_community.retrievers import BM25Retriever
 
 load_dotenv()
@@ -111,7 +112,7 @@ class RAGSystem:
             bm25_results = self.bm25_retriever.get_relevant_documents(query)
             
             # FAISS 검색 수행
-            faiss_results = self.vectorstore.similarity_search_with_score(query, k=10)
+            faiss_results = self.vectorstore.similarity_search_with_score(query, k=20)
             
             # 결과 결합 및 중복 제거
             combined_results = {}
@@ -124,25 +125,52 @@ class RAGSystem:
                 else:
                     combined_results[doc.page_content] = {'doc': doc, 'bm25_score': 0, 'faiss_score': faiss_score}
             
-            # 최종 점수 계산 및 정렬
+            # 점수 정규화 및 최종 점수 계산
+            bm25_scores = [result['bm25_score'] for result in combined_results.values()]
+            faiss_scores = [result['faiss_score'] for result in combined_results.values()]
+            
+            # MinMaxScaler를 사용하여 점수 정규화
+            bm25_scaler = MinMaxScaler()
+            faiss_scaler = MinMaxScaler()
+            
+            bm25_normalized = bm25_scaler.fit_transform(np.array(bm25_scores).reshape(-1, 1)).flatten()
+            faiss_normalized = 1 - faiss_scaler.fit_transform(np.array(faiss_scores).reshape(-1, 1)).flatten()
+            
+            # 점수 결합
             final_results = []
-            for result in combined_results.values():
-                # BM25 점수 정규화 (이미 0-1 사이)
-                bm25_norm = result['bm25_score']
+            for i, (key, result) in enumerate(combined_results.items()):
+                bm25_score = bm25_normalized[i]
+                faiss_score = faiss_normalized[i]
                 
-                # FAISS 점수 정규화 (거리를 유사도로 변환)
-                faiss_norm = 1 / (1 + result['faiss_score'])
+                # 로그 스케일링 적용
+                log_bm25 = np.log1p(bm25_score)
+                log_faiss = np.log1p(faiss_score)
                 
-                # 가중치 적용 (BM25: 25%, FAISS: 75%)
-                final_score = 0.25 * bm25_norm + 0.75 * faiss_norm
+                # 기하 평균 계산
+                geometric_mean = np.sqrt(log_bm25 * log_faiss)
+                
+                # TF-IDF 가중치 적용 (예시)
+                tfidf_weight = self.calculate_tfidf_weight(result['doc'], query)
+                
+                # 최종 점수 계산
+                final_score = geometric_mean * (1 + tfidf_weight)
                 
                 final_results.append((result['doc'], final_score))
             
             final_results.sort(key=lambda x: x[1], reverse=True)
             
-            return final_results[:5]  # 상위 5개 결과 반환
+            return final_results[:10]  # 상위 10개 결과 반환
         
         return ensemble_retrieve
+
+    def calculate_tfidf_weight(self, doc, query):
+        # TF-IDF 가중치 계산 로직 구현
+        # 이 부분은 실제 TF-IDF 구현에 따라 달라질 수 있습니다
+        # 간단한 예시:
+        query_terms = set(query.lower().split())
+        doc_terms = set(doc.page_content.lower().split())
+        common_terms = query_terms.intersection(doc_terms)
+        return len(common_terms) / len(query_terms)
 
     def answer_question(self, question):
         try:
@@ -166,10 +194,11 @@ class RAGSystem:
             prompt = PromptTemplate(
                 input_variables=["question", "abstracts"],
                 template="""다음은 사용자의 질문과 관련된 논문 초록입니다. 이 정보만을 바탕으로 사용자의 질문에 답변해주세요.
-                제공된 논문 정보에 없는 내용은 절대 포함하지 마세요.
-                만약 주어진 정보로 질문에 답하기 어렵다면, "제공된 정보만으로는 정확한 답변이 어렵습니다."라고 대답해주세요.
-                추측하거나 부정확한 정보를 제공하지 마세요.
-
+                
+                - 제공된 논문 정보에 없는 내용은 절대 포함하지 마세요. 
+                - 추측하거나 부정확한 정보를 제공하지 마세요.
+                - 주어진 논문 정보로 질문에대한 정보가 없어 답하기 어렵다면, "nodata"라고 대답해주세요.
+                
                 질문: {question}
 
                 관련 논문 초록:

@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import NoResult from './NoResult';
 import GPTSummary from './GPTSummary';
 import PaperList from './PaperList';
+import { debounce } from 'lodash';
 
 const SearchPage = () => {
   const [searchResult, setSearchResult] = useState(null);
@@ -14,33 +15,42 @@ const SearchPage = () => {
   const navigate = useNavigate();
   const query = location.state?.query || "";
 
-  const handleSearch = useCallback(async (searchQuery) => {
-    setIsLoading(true);
-    setError(null);
-    setSearchResult(null);
+  console.log('SearchPage rendered');
 
-    try {
-      const response = await fetch('http://localhost:8000/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: searchQuery }),
-      });
+  const debouncedHandleSearch = useCallback(
+    (searchQuery) => {
+      const search = async () => {
+        setIsLoading(true);
+        setError(null);
 
-      if (!response.ok) throw new Error('검색 요청 실패');
-      const data = await response.json();
-      setSearchResult(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+        try {
+          const response = await fetch('http://localhost:8000/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: searchQuery }),
+          });
+
+          if (!response.ok) throw new Error('검색 요청 실패');
+          const data = await response.json();
+          setSearchResult(data);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      debounce(search, 300)();
+    },
+    []
+  );
 
   useEffect(() => {
+    console.log('SearchPage useEffect triggered', { query });
     if (query) {
-      handleSearch(query);
+      debouncedHandleSearch(query);
     }
-  }, [query, handleSearch]);
+  }, [query, debouncedHandleSearch]);
 
   const gptSaysNoData = searchResult?.answer?.includes("nodata");
 
@@ -65,14 +75,19 @@ const SearchPage = () => {
             </Box>
             <Divider sx={{ borderColor: 'primary.main', borderWidth: 2 }} />
             <Box sx={{ mt: 4 }}>
-              {isLoading && <CircularProgress />}
-              {error && <Typography color="error" align="center">{error}</Typography>}
-              {gptSaysNoData && <NoResult />}
-              {!gptSaysNoData && searchResult && <GPTSummary summary={searchResult.answer} />}
+              {isLoading ? (
+                <CircularProgress />
+              ) : (
+                <>
+                  {error && <Typography color="error" align="center">{error}</Typography>}
+                  {gptSaysNoData && <NoResult />}
+                  {!gptSaysNoData && searchResult && <GPTSummary summary={searchResult.answer} />}
+                </>
+              )}
             </Box>
           </Grid>
           <Grid item xs={4}>
-            {searchResult?.sources?.length > 0 ? (
+            {!isLoading && searchResult?.sources?.length > 0 ? (
               <PaperList papers={searchResult.sources} gptAnswer={searchResult.answer} />
             ) : (
               !isLoading && !error && <NoResult />
