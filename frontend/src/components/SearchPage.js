@@ -42,12 +42,14 @@ const SearchPage = () => {
     }
   }, [query, handleSearch]);
 
+  const gptSaysNoData = searchResult?.answer?.includes("nodata");
+
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
-        <Button 
-          variant="contained" 
-          color="primary" 
+        <Button
+          variant="contained"
+          color="primary"
           onClick={() => navigate('/')}
           sx={{ mb: 2 }}
         >
@@ -65,12 +67,13 @@ const SearchPage = () => {
             <Box sx={{ mt: 4 }}>
               {isLoading && <CircularProgress />}
               {error && <Typography color="error" align="center">{error}</Typography>}
-              {searchResult && <GPTSummary summary={searchResult.answer} />}
+              {gptSaysNoData && <NoResult />}
+              {!gptSaysNoData && searchResult && <GPTSummary summary={searchResult.answer} />}
             </Box>
           </Grid>
           <Grid item xs={4}>
             {searchResult?.sources?.length > 0 ? (
-              <PaperList papers={searchResult.sources} />
+              <PaperList papers={searchResult.sources} gptAnswer={searchResult.answer} />
             ) : (
               !isLoading && !error && <NoResult />
             )}
@@ -79,6 +82,7 @@ const SearchPage = () => {
       </Box>
     </Container>
   );
+
 }
 
 export default SearchPage;
