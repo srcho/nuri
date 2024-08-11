@@ -54,6 +54,9 @@ const SearchPage = () => {
 
   const gptSaysNoData = searchResult?.answer?.includes("nodata");
 
+  // 유사도 75% 이상인 논문만 필터링
+  const filteredPapers = searchResult?.sources?.filter(paper => paper.similarity >= 0.75);
+
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
@@ -75,22 +78,24 @@ const SearchPage = () => {
             </Box>
             <Divider sx={{ borderColor: 'primary.main', borderWidth: 2 }} />
             <Box sx={{ mt: 4 }}>
+              {error && <Typography color="error" align="center">{error}</Typography>}
               {isLoading ? (
-                <CircularProgress />
+                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
+                  <CircularProgress />
+                </Box>
               ) : (
                 <>
-                  {error && <Typography color="error" align="center">{error}</Typography>}
                   {gptSaysNoData && <NoResult />}
-                  {!gptSaysNoData && searchResult && <GPTSummary summary={searchResult.answer} />}
+                  {!gptSaysNoData && searchResult && <GPTSummary summary={searchResult.answer} sources={filteredPapers} />}
                 </>
               )}
             </Box>
           </Grid>
           <Grid item xs={4}>
-            {!isLoading && searchResult?.sources?.length > 0 ? (
-              <PaperList papers={searchResult.sources} gptAnswer={searchResult.answer} />
+            {filteredPapers?.length > 0 ? (
+              <PaperList papers={filteredPapers} gptAnswer={searchResult?.answer} />
             ) : (
-              !isLoading && !error && <NoResult />
+              !error && !isLoading && <Typography align="center"></Typography>
             )}
           </Grid>
         </Grid>

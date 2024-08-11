@@ -22,8 +22,7 @@ function GPTSummary({ summary, sources = [] }) {
       setFootnotes(sources.map((source, index) => ({
         id: index + 1,
         title: source.title || "제목 없음",
-        authors: source.authors || "저자 정보 없음",
-        url: source.url || ""
+        authors: source.authors || "저자 정보 없음"
       })));
     }
   }, [summary, sources]);
@@ -60,9 +59,6 @@ function GPTSummary({ summary, sources = [] }) {
           {footnotes.map((footnote) => (
             <Typography key={footnote.id} variant="body2" paragraph>
               [{footnote.id}] {footnote.title} - {footnote.authors}
-              {footnote.url && (
-                <> (<a href={footnote.url} target="_blank" rel="noopener noreferrer">링크</a>)</>
-              )}
             </Typography>
           ))}
         </Box>
