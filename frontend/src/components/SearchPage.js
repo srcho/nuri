@@ -6,6 +6,7 @@ import NoResult from './NoResult';
 import GPTSummary from './GPTSummary';
 import PaperList from './PaperList';
 import { debounce } from 'lodash';
+import Logo from '../DBpia_logo.png'; // 절대 경로로 변경
 
 const SearchPage = () => {
   const [searchResult, setSearchResult] = useState(null);
@@ -54,20 +55,23 @@ const SearchPage = () => {
 
   const gptSaysNoData = searchResult?.answer?.toLowerCase().includes("nodata");
 
-  // 유사도 60% 이상인 논문만 필터링 (이미 백엔드에서 처리됨)
   const filteredPapers = searchResult?.sources || [];
 
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+          <img src={Logo} alt="DBpia_Logo" style={{ height: '20px', marginRight: '16px' }} />
+          
+        </Box>
         <Button
-          variant="contained"
-          color="primary"
-          onClick={() => navigate('/')}
-          sx={{ mb: 2 }}
-        >
-          메인 페이지로 돌아가기
-        </Button>
+            variant="contained"
+            color="primary"
+            onClick={() => navigate('/')}
+            sx={{ mb: 2 }}
+          >
+            메인 페이지로 돌아가기
+          </Button>
         <Grid container spacing={2}>
           <Grid item xs={8}>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -95,7 +99,7 @@ const SearchPage = () => {
             {filteredPapers?.length > 0 ? (
               <PaperList papers={filteredPapers} gptAnswer={searchResult?.answer} />
             ) : (
-              !error && !isLoading && <Typography align="center">유사도가 60% 이상인 논문이 없습니다.</Typography>
+              !error && !isLoading && <Typography align="center"></Typography>
             )}
           </Grid>
         </Grid>

@@ -16,7 +16,7 @@ const PaperList = ({ papers, gptAnswer }) => {
 
   // 필터링된 논문 리스트가 비어있는 경우
   if (filteredPapers.length === 0) {
-    return <Typography>유사도가 60% 이상인 논문이 없습니다.</Typography>;
+    return null; // 아무것도 표시되지 않음
   }
 
   return (
@@ -69,9 +69,7 @@ const PaperList = ({ papers, gptAnswer }) => {
                       </Button>
                     )}
                   </Box>
-                  <Typography variant="body2" fontWeight="bold" color="text.secondary" sx={{ mt: 1 }}>
-                    유사도: {(paper.similarity * 100).toFixed(2)}%
-                  </Typography>
+                  {/* 유사도 수치 표시 제거됨 */}
                 </>
               }
             />
