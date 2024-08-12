@@ -15,25 +15,54 @@ import numpy as np
 from kiwipiepy import Kiwi
 from sklearn.preprocessing import MinMaxScaler
 from langchain_community.retrievers import BM25Retriever
+from transformers import BertModel, BertTokenizer
+from collections import Counter
+import torch
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
+class KoBERTEmbeddings:
+    def __init__(self):
+        self.tokenizer = BertTokenizer.from_pretrained("monologg/kobert")
+        self.model = BertModel.from_pretrained("monologg/kobert")
+
+    def __call__(self, texts):
+        return self.embed_documents(texts)
+
+    def embed_documents(self, texts):
+        if isinstance(texts, str):
+            texts = [texts]
+        encoded_input = self.tokenizer(texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
+        with torch.no_grad():
+            model_output = self.model(**encoded_input)
+        return model_output.last_hidden_state[:, 0, :].numpy()
+
+    def embed_query(self, text):
+        return self.embed_documents([text])[0]
 
 class RAGSystem:
     def __init__(self):
         self.kiwi = Kiwi()
-        self.embeddings = OpenAIEmbeddings()
+        self.embeddings = KoBERTEmbeddings()
         self.llm = ChatOpenAI(model_name="gpt-4", temperature=0)
         self.load_data()
         self.setup_retrieval()
 
     def tokenize_text(self, text):
         tokens = self.kiwi.tokenize(text)
-        return " ".join([token.form for token in tokens])
+        return " ".join([token.form for token in tokens if token.tag not in ['SF', 'SP', 'SS', 'SE']])
+
+    def remove_stopwords(self, text):
+        stopwords = set(['은', '는', '이', '가', '을', '를', '의', '에', '에서', '로', '으로'])
+        return ' '.join([word for word in text.split() if word not in stopwords])
 
     def load_data(self):
-        df = pd.read_excel('../data/nuri_mod2.xlsx')
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(base_dir, '../data/nuri_mod3.xlsx')
+        df = pd.read_excel(file_path)
         logger.info(f"Loaded {len(df)} rows from Excel file")
         
         self.documents = []
@@ -41,8 +70,13 @@ class RAGSystem:
             if pd.notna(row['title']) and pd.notna(row['abstract.Element:Text']):
                 processed_title = self.tokenize_text(row['title'])
                 processed_abstract = self.tokenize_text(row['abstract.Element:Text'])
-                original_content = f"{row['title']} {row['abstract.Element:Text']}"
-                processed_content = f"{processed_title} {processed_abstract}"
+                
+                processed_keywords = ""
+                if 'keywords' in row and pd.notna(row['keywords']):
+                    processed_keywords = self.tokenize_text(row['keywords'])
+                
+                processed_content = f"{processed_title} {processed_abstract} {processed_keywords}"
+                processed_content = self.remove_stopwords(processed_content)
                 self.documents.append(
                     Document(
                         page_content=processed_content,
@@ -51,7 +85,7 @@ class RAGSystem:
                             "authors": row['authors'] if pd.notna(row['authors']) else "정보 없음",
                             "url": row['URL'] if pd.notna(row['URL']) else "정보 없음",
                             "abstract": row['abstract.Element:Text'],
-                            "original_content": original_content
+                            "processed_content": processed_content
                         }
                     )
                 )
@@ -89,7 +123,7 @@ class RAGSystem:
             self.create_new_index(index_dir, hash_file)
         
         self.bm25_retriever = BM25Retriever.from_documents(self.documents)
-        self.bm25_retriever.k = 5  # 상위 5개 결과 반환
+        self.bm25_retriever.k = 10
 
         self.retriever = self.create_ensemble_retriever()
 
@@ -106,83 +140,119 @@ class RAGSystem:
 
         logger.info(f"New FAISS index created and hash saved: {directory_hash}")
 
+    def expand_query(self, query):
+        tokens = self.kiwi.tokenize(query)
+        content_words = [token.form for token in tokens if token.tag.startswith('N') or token.tag.startswith('V')]
+        top_words = [word for word, _ in Counter(content_words).most_common(3)]
+        expanded_query = query + " " + " ".join(top_words)
+        return expanded_query
+
+    def calculate_semantic_similarity(self, query, results):
+        query_embedding = self.embeddings.embed_query(query)
+        semantic_results = []
+        for result in results:
+            try:
+                if isinstance(result, Document):
+                    doc = result
+                    score = 1.0  # 기본 점수
+                elif isinstance(result, tuple):
+                    if len(result) == 2:
+                        doc, score = result
+                    else:
+                        logger.warning(f"Unexpected tuple length in result: {len(result)}")
+                        continue
+                elif isinstance(result, dict) and 'document' in result and 'score' in result:
+                    doc = result['document']
+                    score = result['score']
+                else:
+                    logger.warning(f"Unexpected result type: {type(result)}")
+                    continue
+                
+                doc_embedding = self.embeddings.embed_query(doc.page_content)
+                semantic_score = np.dot(query_embedding, doc_embedding) / (np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding))
+                semantic_results.append({'doc': doc, 'score': semantic_score * score})
+            except Exception as e:
+                logger.error(f"Error processing result in calculate_semantic_similarity: {e}")
+                continue
+        return semantic_results
+
     def create_ensemble_retriever(self):
         def ensemble_retrieve(query):
-            # BM25 검색 수행
-            bm25_results = self.bm25_retriever.get_relevant_documents(query)
+            logger.info(f"Original query: {query}")
+            processed_query = self.tokenize_text(query)
+            logger.info(f"Processed query: {processed_query}")
+            expanded_query = self.expand_query(processed_query)
+            logger.info(f"Expanded query: {expanded_query}")
             
-            # FAISS 검색 수행
-            faiss_results = self.vectorstore.similarity_search_with_score(query, k=20)
+            bm25_results = self.bm25_retriever.invoke(expanded_query)
+            logger.info(f"Number of BM25 results: {len(bm25_results)}")
             
-            # 결과 결합 및 중복 제거
+            try:
+                faiss_results = self.vectorstore.similarity_search_with_score(expanded_query, k=20)
+                logger.info(f"Number of FAISS results: {len(faiss_results)}")
+            except Exception as e:
+                logger.error(f"Error in FAISS search: {e}")
+                faiss_results = []
+            
+            semantic_results = self.calculate_semantic_similarity(expanded_query, faiss_results)
+            logger.info(f"Number of semantic results: {len(semantic_results)}")
+            
             combined_results = {}
+            
             for doc in bm25_results:
-                combined_results[doc.page_content] = {'doc': doc, 'bm25_score': 1, 'faiss_score': 1}
-            
-            for doc, faiss_score in faiss_results:
-                if doc.page_content in combined_results:
-                    combined_results[doc.page_content]['faiss_score'] = faiss_score
+                key = doc.page_content
+                if key not in combined_results:
+                    combined_results[key] = {'doc': doc, 'score': 1}
                 else:
-                    combined_results[doc.page_content] = {'doc': doc, 'bm25_score': 0, 'faiss_score': faiss_score}
+                    combined_results[key]['score'] += 1
             
-            # 점수 정규화 및 최종 점수 계산
-            bm25_scores = [result['bm25_score'] for result in combined_results.values()]
-            faiss_scores = [result['faiss_score'] for result in combined_results.values()]
-            
-            # MinMaxScaler를 사용하여 점수 정규화
-            bm25_scaler = MinMaxScaler()
-            faiss_scaler = MinMaxScaler()
-            
-            bm25_normalized = bm25_scaler.fit_transform(np.array(bm25_scores).reshape(-1, 1)).flatten()
-            faiss_normalized = 1 - faiss_scaler.fit_transform(np.array(faiss_scores).reshape(-1, 1)).flatten()
-            
-            # 점수 결합
-            final_results = []
-            for i, (key, result) in enumerate(combined_results.items()):
-                bm25_score = bm25_normalized[i]
-                faiss_score = faiss_normalized[i]
-                
-                # 로그 스케일링 적용
-                log_bm25 = np.log1p(bm25_score)
-                log_faiss = np.log1p(faiss_score)
-                
-                # 기하 평균 계산
-                geometric_mean = np.sqrt(log_bm25 * log_faiss)
-                
-                # TF-IDF 가중치 적용 (예시)
-                tfidf_weight = self.calculate_tfidf_weight(result['doc'], query)
-                
-                # 최종 점수 계산
-                final_score = geometric_mean * (1 + tfidf_weight)
-                
-                final_results.append((result['doc'], final_score))
-            
-            final_results.sort(key=lambda x: x[1], reverse=True)
-            
-            return final_results[:10]  # 상위 10개 결과 반환
+            for result in semantic_results:
+                key = result['doc'].page_content
+                if key not in combined_results:
+                    combined_results[key] = result
+                else:
+                    combined_results[key]['score'] += result['score']
+
+            final_results = sorted(combined_results.values(), key=lambda x: x['score'], reverse=True)
+            logger.info(f"Final number of results: {len(final_results)}")
+            return final_results[:10]
         
         return ensemble_retrieve
 
     def calculate_tfidf_weight(self, doc, query):
-        # TF-IDF 가중치 계산 로직 구현
-        # 이 부분은 실제 TF-IDF 구현에 따라 달라질 수 있습니다
-        # 간단한 예시:
-        query_terms = set(query.lower().split())
-        doc_terms = set(doc.page_content.lower().split())
+        query_terms = set(query.split())
+        doc_terms = set(doc.page_content.split())
         common_terms = query_terms.intersection(doc_terms)
-        return len(common_terms) / len(query_terms)
+        tf = len(common_terms) / len(doc_terms)
+        idf = math.log(len(self.documents) / (1 + sum(1 for d in self.documents if any(term in d.page_content for term in query_terms))))
+        return tf * idf
+
+    def calculate_dynamic_threshold(self, similar_docs):
+        if not similar_docs:
+            return 0.65
+        scores = [result['score'] for result in similar_docs]
+        return max(0.5, np.mean(scores) - np.std(scores))
 
     def answer_question(self, question):
         try:
             similar_docs = self.retriever(question)
+            logger.info(f"Retrieved {len(similar_docs)} documents")
+            
             sources = []
             
-            for doc, similarity in similar_docs:
-                metadata = self.safe_serialize_metadata(doc.metadata)
-                metadata['similarity'] = round(similarity, 2)  # 백분율로 변환하고 소수점 둘째 자리까지 표시
-                sources.append(metadata)
+            similarity_threshold = self.calculate_dynamic_threshold(similar_docs)
+            for result in similar_docs:
+                if isinstance(result, dict) and 'doc' in result and 'score' in result:
+                    doc = result['doc']
+                    similarity = result['score']
+                    if similarity >= similarity_threshold:
+                        metadata = self.safe_serialize_metadata(doc.metadata)
+                        metadata['similarity'] = similarity
+                        sources.append(metadata)
+                else:
+                    logger.warning(f"Unexpected result format: {result}")
 
-            logger.info(f"Found {len(sources)} relevant documents")
+            logger.info(f"Found {len(sources)} relevant documents with similarity >= {similarity_threshold}")
 
             if not sources:
                 return {
@@ -191,24 +261,34 @@ class RAGSystem:
                 }
 
             abstracts = [source['abstract'] for source in sources]
+            logger.info(f"Number of abstracts: {len(abstracts)}")
+            logger.info(f"First abstract: {abstracts[0][:100]}...")
+
             prompt = PromptTemplate(
                 input_variables=["question", "abstracts"],
-                template="""다음은 사용자의 질문과 관련된 논문 초록입니다. 이 정보만을 바탕으로 사용자의 질문에 답변해주세요.
-                
-                - 제공된 논문 정보에 없는 내용은 절대 포함하지 마세요. 
+                template="""당신은 최고 수준의 데이터 분석 전문가 입니다. 아래 정보는 사용자의 질문과 관련된 논문 초록입니다. 이 정보만을 바탕으로 사용자의 질문에 답변해주세요.
+                - 제공된 논문 초록 정보에 없는 내용은 절대 포함하지 마세요. 
                 - 추측하거나 부정확한 정보를 제공하지 마세요.
-                - 주어진 논문 정보로 질문에대한 정보가 없어 답하기 어렵다면, "nodata"라고 대답해주세요.
+                - 주어진 논문 초록 정보로 질문에대한 정보가 없어 답하기 어렵다면, "nodata"라고 대답해주세요.
+                - 논문 초록 정보를 참고하여 질문에 대한 정보를 제공해주세요.
+                - 텍스트만 제공해주세요.
                 
                 질문: {question}
 
                 관련 논문 초록:
                 {abstracts}
-
-                답변:"""
+                """
             )
 
-            ai_response = self.llm.invoke(prompt.format(question=question, abstracts='\n'.join(abstracts)))
+            formatted_prompt = prompt.format(question=question, abstracts='\n'.join(abstracts))
+            logger.info(f"Formatted prompt: {formatted_prompt[:500]}...")
+
+            ai_response = self.llm.invoke(formatted_prompt)
+            
+            logger.info(f"Raw AI response: {ai_response}")
+            
             answer = ai_response.content
+            logger.info(f"AI response content: {answer}")
             
             logger.info(f"GPT query successful. Response length: {len(answer)}")
             
@@ -218,6 +298,7 @@ class RAGSystem:
             }
         except Exception as e:
             logger.error(f"Error in answer_question: {str(e)}")
+            logger.error(f"Error occurred at line: {e.__traceback__.tb_lineno}")
             raise
 
     @staticmethod
@@ -236,8 +317,9 @@ class RAGSystem:
         try:
             json.dumps(value)
             return value if value != "" else "정보 없음"
+            
         except (TypeError, OverflowError, ValueError):
-            return str(value)
+                return str(value)
 
 print("Initializing RAG system...")
 rag_system = RAGSystem()

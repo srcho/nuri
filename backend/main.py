@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from rag_module import RAGSystem
+from .rag_module import RAGSystem
 import logging
 
 app = FastAPI()

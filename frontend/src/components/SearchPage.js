@@ -52,10 +52,10 @@ const SearchPage = () => {
     }
   }, [query, debouncedHandleSearch]);
 
-  const gptSaysNoData = searchResult?.answer?.includes("nodata");
+  const gptSaysNoData = searchResult?.answer?.toLowerCase().includes("nodata");
 
-  // 유사도 75% 이상인 논문만 필터링
-  const filteredPapers = searchResult?.sources?.filter(paper => paper.similarity >= 0.75);
+  // 유사도 60% 이상인 논문만 필터링 (이미 백엔드에서 처리됨)
+  const filteredPapers = searchResult?.sources || [];
 
   return (
     <Container maxWidth="lg">
@@ -95,7 +95,7 @@ const SearchPage = () => {
             {filteredPapers?.length > 0 ? (
               <PaperList papers={filteredPapers} gptAnswer={searchResult?.answer} />
             ) : (
-              !error && !isLoading && <Typography align="center"></Typography>
+              !error && !isLoading && <Typography align="center">유사도가 60% 이상인 논문이 없습니다.</Typography>
             )}
           </Grid>
         </Grid>

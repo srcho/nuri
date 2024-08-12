@@ -11,12 +11,12 @@ const PaperList = ({ papers, gptAnswer }) => {
     }));
   };
 
-  // 유사도 75% 이상인 논문만 필터링
-  const filteredPapers = papers.filter(paper => paper.similarity >= 0.75);
+  // 필터링은 이미 백엔드에서 수행되었으므로 여기서는 필요 없음
+  const filteredPapers = papers;
 
   // 필터링된 논문 리스트가 비어있는 경우
   if (filteredPapers.length === 0) {
-    return <Typography></Typography>;
+    return <Typography>유사도가 60% 이상인 논문이 없습니다.</Typography>;
   }
 
   return (
