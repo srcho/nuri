@@ -19,6 +19,10 @@ const PaperList = ({ papers, gptAnswer }) => {
     return null; // 아무것도 표시되지 않음
   }
 
+  if(gptAnswer === "nodata") {
+    return null;
+  }
+
   return (
     <Paper elevation={3} sx={{ p: 2, borderRadius: '16px' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>

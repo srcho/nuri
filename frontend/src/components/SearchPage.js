@@ -6,7 +6,7 @@ import NoResult from './NoResult';
 import GPTSummary from './GPTSummary';
 import PaperList from './PaperList';
 import { debounce } from 'lodash';
-import Logo from '../DBpia_logo.png'; // 절대 경로로 변경
+import Logo from '../DBpia_logo.png';
 
 const SearchPage = () => {
   const [searchResult, setSearchResult] = useState(null);
@@ -18,6 +18,7 @@ const SearchPage = () => {
 
   console.log('SearchPage rendered');
 
+  // 검색 요청을 디바운스하여 처리하는 함수
   const debouncedHandleSearch = useCallback(
     (searchQuery) => {
       const search = async () => {
@@ -46,6 +47,7 @@ const SearchPage = () => {
     []
   );
 
+  // 컴포넌트가 마운트되거나 query가 변경될 때 검색 요청을 트리거
   useEffect(() => {
     console.log('SearchPage useEffect triggered', { query });
     if (query) {

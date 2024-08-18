@@ -19,13 +19,17 @@ from transformers import BertModel, BertTokenizer
 from collections import Counter
 import torch
 
+# 환경 변수 로드
 load_dotenv()
 
+# 로깅 설정
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
+# KoBERT 임베딩 클래스 정의
 class KoBERTEmbeddings:
     def __init__(self):
+        # KoBERT 토크나이저와 모델 로드
         self.tokenizer = BertTokenizer.from_pretrained("monologg/kobert")
         self.model = BertModel.from_pretrained("monologg/kobert")
 
@@ -33,6 +37,7 @@ class KoBERTEmbeddings:
         return self.embed_documents(texts)
 
     def embed_documents(self, texts):
+        # 텍스트를 토큰화하고 임베딩 생성
         if isinstance(texts, str):
             texts = [texts]
         encoded_input = self.tokenizer(texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
@@ -43,23 +48,28 @@ class KoBERTEmbeddings:
     def embed_query(self, text):
         return self.embed_documents([text])[0]
 
+# RAG 시스템 클래스 정의
 class RAGSystem:
     def __init__(self):
+        # Kiwi 토크나이저, KoBERT 임베딩, ChatGPT 모델 초기화
         self.kiwi = Kiwi()
         self.embeddings = KoBERTEmbeddings()
-        self.llm = ChatOpenAI(model_name="gpt-4", temperature=0)
+        self.llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
         self.load_data()
         self.setup_retrieval()
 
     def tokenize_text(self, text):
+        # 텍스트를 토큰화하고 불필요한 태그 제거
         tokens = self.kiwi.tokenize(text)
         return " ".join([token.form for token in tokens if token.tag not in ['SF', 'SP', 'SS', 'SE']])
 
     def remove_stopwords(self, text):
+        # 불용어 제거
         stopwords = set(['은', '는', '이', '가', '을', '를', '의', '에', '에서', '로', '으로'])
         return ' '.join([word for word in text.split() if word not in stopwords])
 
     def load_data(self):
+        # 데이터 로드 및 전처리
         base_dir = os.path.dirname(os.path.abspath(__file__))
         file_path = os.path.join(base_dir, '../data/nuri_mod3.xlsx')
         df = pd.read_excel(file_path)
@@ -92,6 +102,7 @@ class RAGSystem:
         logger.info(f"Created {len(self.documents)} valid documents")
 
     def calculate_directory_hash(self, directory):
+        # 디렉토리의 해시값 계산
         sha256_hash = hashlib.sha256()
         for root, _, files in os.walk(directory):
             for filename in sorted(files):
@@ -102,6 +113,7 @@ class RAGSystem:
         return sha256_hash.hexdigest()
 
     def setup_retrieval(self):
+        # FAISS 인덱스 디렉토리와 해시 파일 경로 설정
         index_dir = "faiss_index"
         hash_file = "faiss_index.hash"
 
@@ -128,6 +140,7 @@ class RAGSystem:
         self.retriever = self.create_ensemble_retriever()
 
     def create_new_index(self, index_dir, hash_file):
+        # FAISS 인덱스 생성 및 저장
         if os.path.exists(index_dir):
             shutil.rmtree(index_dir)
         
@@ -141,6 +154,7 @@ class RAGSystem:
         logger.info(f"New FAISS index created and hash saved: {directory_hash}")
 
     def expand_query(self, query):
+        # 쿼리 확장
         tokens = self.kiwi.tokenize(query)
         content_words = [token.form for token in tokens if token.tag.startswith('N') or token.tag.startswith('V')]
         top_words = [word for word, _ in Counter(content_words).most_common(3)]
@@ -148,6 +162,7 @@ class RAGSystem:
         return expanded_query
 
     def calculate_semantic_similarity(self, query, results):
+        # 의미 유사도 계산
         query_embedding = self.embeddings.embed_query(query)
         semantic_results = []
         for result in results:
@@ -177,6 +192,7 @@ class RAGSystem:
         return semantic_results
 
     def create_ensemble_retriever(self):
+        # 앙상블 검색 함수 생성
         def ensemble_retrieve(query):
             logger.info(f"Original query: {query}")
             processed_query = self.tokenize_text(query)
@@ -220,6 +236,7 @@ class RAGSystem:
         return ensemble_retrieve
 
     def calculate_tfidf_weight(self, doc, query):
+        # TF-IDF 가중치 계산
         query_terms = set(query.split())
         doc_terms = set(doc.page_content.split())
         common_terms = query_terms.intersection(doc_terms)
@@ -228,18 +245,20 @@ class RAGSystem:
         return tf * idf
 
     def calculate_dynamic_threshold(self, similar_docs):
+        # 동적 임계값 계산
         if not similar_docs:
-            return 0.65
+            return 0.75
         scores = [result['score'] for result in similar_docs]
         return max(0.5, np.mean(scores) - np.std(scores))
 
     def answer_question(self, question):
         try:
+            # 질문에 대한 유사 문서 검색
             similar_docs = self.retriever(question)
             logger.info(f"Retrieved {len(similar_docs)} documents")
             
-            sources = []
-            
+            sources = []            
+            # 동적 임계값 계산
             similarity_threshold = self.calculate_dynamic_threshold(similar_docs)
             for result in similar_docs:
                 if isinstance(result, dict) and 'doc' in result and 'score' in result:
@@ -266,16 +285,22 @@ class RAGSystem:
 
             prompt = PromptTemplate(
                 input_variables=["question", "abstracts"],
-                template="""당신은 최고 수준의 데이터 분석 전문가 입니다. 아래 정보는 사용자의 질문과 관련된 논문 초록입니다. 이 정보만을 바탕으로 사용자의 질문에 답변해주세요.
-                - 제공된 논문 초록 정보에 없는 내용은 절대 포함하지 마세요. 
-                - 추측하거나 부정확한 정보를 제공하지 마세요.
-                - 주어진 논문 초록 정보로 질문에대한 정보가 없어 답하기 어렵다면, "nodata"라고 대답해주세요.
-                - 논문 초록 정보를 참고하여 질문에 대한 정보를 제공해주세요.
-                - 텍스트만 제공해주세요.
+                template="""You are a top-notch data analytics expert. The information below is an abstract of an article relevant to your question. Please use only this information to answer your question.
+                - Do not include anything that is not in the article abstract information provided. 
+                - Don't speculate or provide inaccurate information.
+                - If you don't have enough information to answer the question based on the article abstract information provided, answer ‘nodata’.
+                - Refer to the article abstract information to provide information about the question.
+                - Please provide text only.
+                - Must Include article references for each sentence. e.g., [6], [7&9]
+                - Indicate source articles for each summary sentence strictly based on a generated article number. e.g., [6], [7&9]
+                - Need to be very accurate. Ensure accuracy of key points.
+                - Summarize the key contents. Include enough detail to convey the main ideas effectively.
+                - Use bulletpoints to structure the answer like following example.
+                - answer in Korean.
                 
-                질문: {question}
+                Question: {question}
 
-                관련 논문 초록:
+                Related paper abstracts:
                 {abstracts}
                 """
             )
@@ -303,6 +328,7 @@ class RAGSystem:
 
     @staticmethod
     def safe_serialize_metadata(metadata):
+        # 메타데이터 안전하게 직렬화
         return {
             "title": RAGSystem.safe_serialize_value(metadata.get('title')),
             "authors": RAGSystem.safe_serialize_value(metadata.get('authors')),
@@ -312,6 +338,7 @@ class RAGSystem:
 
     @staticmethod
     def safe_serialize_value(value):
+        # 값 안전하게 직렬화
         if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
             return "정보 없음"
         try:
@@ -321,6 +348,7 @@ class RAGSystem:
         except (TypeError, OverflowError, ValueError):
                 return str(value)
 
+# RAG 시스템 초기화
 print("Initializing RAG system...")
 rag_system = RAGSystem()
 print("RAG system initialized and ready for queries.")
