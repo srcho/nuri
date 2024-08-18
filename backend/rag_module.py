@@ -71,7 +71,7 @@ class RAGSystem:
     def load_data(self):
         # 데이터 로드 및 전처리
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(base_dir, '../data/nuri_mod3.xlsx')
+        file_path = os.path.join(base_dir, '../data/nuri_mod.xlsx')
         df = pd.read_excel(file_path)
         logger.info(f"Loaded {len(df)} rows from Excel file")
         
